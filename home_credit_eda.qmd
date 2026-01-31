@@ -4,10 +4,16 @@ author: "Samantha Huang"
 date: today
 format:
   html:
-    code-fold: false
+    code-fold: true
+    code-summary: "Show code"
     toc: true
     toc-depth: 3
     embed-resources: true
+    warning: false
+    message: false
+execute:
+  warning: false
+  message: false
 jupyter: python3
 ---
 
