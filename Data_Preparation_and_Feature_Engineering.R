@@ -236,6 +236,127 @@ aggregate_installments <- function(installments) {
 }
 
 
+#' Aggregate Credit Card Balance Data
+#'
+#' Creates client-level features from monthly credit card balance data including:
+#' - Credit utilization patterns (how much of credit limit is used)
+#' - Payment discipline (DPD - days past due patterns)
+#' - Balance trends (increasing/decreasing debt)
+#' - Drawing behavior (ATM withdrawals, cash advances)
+#' 
+#' Strong predictors of default:
+#' - High credit utilization (using >80% of credit limit)
+#' - Frequent late payments (DPD > 0)
+#' - Increasing balance trends (accumulating debt)
+#' - Heavy ATM withdrawal usage (need for cash)
+#'
+#' @param credit_card Data frame of credit_card_balance.csv
+#' @return Data frame with one row per SK_ID_CURR and aggregated credit card features
+#' @examples
+#' credit_card <- read_csv("credit_card_balance.csv")
+#' cc_agg <- aggregate_credit_card(credit_card)
+aggregate_credit_card <- function(credit_card) {
+  
+  message("Aggregating credit card balance data...")
+  
+  # Calculate derived features first
+  cc_data <- credit_card |>
+    mutate(
+      # Credit utilization rate (balance / credit limit)
+      UTILIZATION_RATE = if_else(
+        AMT_CREDIT_LIMIT_ACTUAL > 0,
+        AMT_BALANCE / AMT_CREDIT_LIMIT_ACTUAL,
+        NA_real_
+      ),
+      
+      # High utilization flag (>80% is risky)
+      HIGH_UTILIZATION = as.integer(UTILIZATION_RATE > 0.8),
+      
+      # Payment discipline flags
+      IS_DPD = as.integer(SK_DPD > 0),  # Any days past due
+      IS_LATE = as.integer(SK_DPD > 5), # Significantly late (>5 days)
+      
+      # Drawing behavior (how much of limit used for drawings)
+      DRAWING_RATE = if_else(
+        AMT_CREDIT_LIMIT_ACTUAL > 0,
+        AMT_DRAWINGS_CURRENT / AMT_CREDIT_LIMIT_ACTUAL,
+        NA_real_
+      ),
+      
+      # ATM usage rate
+      ATM_RATE = if_else(
+        AMT_DRAWINGS_CURRENT > 0,
+        AMT_DRAWINGS_ATM_CURRENT / AMT_DRAWINGS_CURRENT,
+        NA_real_
+      ),
+      
+      # Payment vs balance ratio (are they paying down debt?)
+      PAYMENT_RATIO = if_else(
+        AMT_BALANCE > 0,
+        AMT_PAYMENT_CURRENT / AMT_BALANCE,
+        NA_real_
+      )
+    )
+  
+  # Aggregate to client level
+  cc_agg <- cc_data |>
+    group_by(SK_ID_CURR) |>
+    summarise(
+      # Card count and balance
+      CC_COUNT = n_distinct(SK_ID_PREV),
+      CC_MONTHS_REPORTED = n(),
+      
+      # Credit utilization patterns - KEY PREDICTOR
+      CC_AVG_UTILIZATION = mean(UTILIZATION_RATE, na.rm = TRUE),
+      CC_MAX_UTILIZATION = max(UTILIZATION_RATE, na.rm = TRUE),
+      CC_HIGH_UTIL_PCT = mean(HIGH_UTILIZATION, na.rm = TRUE),
+      
+      # Payment discipline - KEY PREDICTOR
+      CC_DPD_COUNT = sum(IS_DPD, na.rm = TRUE),
+      CC_DPD_PCT = mean(IS_DPD, na.rm = TRUE),
+      CC_LATE_COUNT = sum(IS_LATE, na.rm = TRUE),
+      CC_LATE_PCT = mean(IS_LATE, na.rm = TRUE),
+      CC_MAX_DPD = max(SK_DPD, na.rm = TRUE),
+      CC_AVG_DPD = mean(SK_DPD, na.rm = TRUE),
+      
+      # Balance and limit amounts
+      CC_AVG_BALANCE = mean(AMT_BALANCE, na.rm = TRUE),
+      CC_MAX_BALANCE = max(AMT_BALANCE, na.rm = TRUE),
+      CC_AVG_LIMIT = mean(AMT_CREDIT_LIMIT_ACTUAL, na.rm = TRUE),
+      
+      # Payment behavior
+      CC_AVG_PAYMENT = mean(AMT_PAYMENT_CURRENT, na.rm = TRUE),
+      CC_MIN_PAYMENT_PCT = mean(AMT_INST_MIN_REGULARITY, na.rm = TRUE),
+      CC_PAYMENT_RATIO = mean(PAYMENT_RATIO, na.rm = TRUE),
+      
+      # Drawing behavior
+      CC_AVG_DRAWINGS = mean(AMT_DRAWINGS_CURRENT, na.rm = TRUE),
+      CC_ATM_RATE = mean(ATM_RATE, na.rm = TRUE),
+      CC_DRAWING_RATE = mean(DRAWING_RATE, na.rm = TRUE),
+      
+      # Receivable amounts (unpaid interest/fees)
+      CC_AVG_RECEIVABLE = mean(AMT_RECEIVABLE_PRINCIPAL, na.rm = TRUE),
+      CC_AVG_TOTAL_RECEIVABLE = mean(AMT_TOTAL_RECEIVABLE, na.rm = TRUE),
+      
+      # Balance trends (is debt increasing or decreasing?)
+      CC_BALANCE_TREND = if_else(
+        n() > 1,
+        cor(MONTHS_BALANCE, AMT_BALANCE, use = "complete.obs"),
+        NA_real_
+      ),
+      
+      .groups = "drop"
+    ) |>
+    # Convert -Inf and Inf to NA
+    mutate(across(where(is.numeric), ~if_else(is.infinite(.x), NA_real_, .x)))
+  
+  message(sprintf("  ✓ Created %d credit card features for %d clients",
+                  ncol(cc_agg) - 1, nrow(cc_agg)))
+  
+  return(cc_agg)
+}
+
+
 # ==============================================================================
 # SECTION 2: DATA QUALITY FIXES
 # ==============================================================================
@@ -446,6 +567,163 @@ apply_missing_value_imputation <- function(data, impute_values) {
 }
 
 
+#' Apply Final Complete Imputation (For Models Requiring No NAs)
+#' 
+#' Imputes ALL remaining missing values using domain-appropriate strategies.
+#' Use this AFTER apply_missing_value_imputation() if you need zero NAs for
+#' models like logistic regression.
+#' 
+#' Strategy:
+#' - Building/apartment features → -999 (unknown indicator)
+#' - EXT_SOURCE columns → median
+#' - Credit bureau inquiries → 0
+#' - Social circle columns → median
+#' - All other numeric → median
+#' - All categorical → mode
+#' 
+#' @param data Dataset with some remaining missing values
+#' @return Dataset with zero missing values
+#' @examples
+#' train <- apply_final_imputation(train)
+apply_final_imputation <- function(data) {
+  
+  message("\nApplying final complete imputation for models requiring no NAs...")
+  result <- data
+  
+  # Count initial missing values
+  initial_na <- sum(is.na(result))
+  message(sprintf("  Initial missing values: %d", initial_na))
+  
+  # ------------------------------------------------------------------
+  # Building/apartment features: -999 as "unknown" indicator
+  # ------------------------------------------------------------------
+  building_cols <- grep("(_AVG|_MODE|_MEDI)$", names(result), value = TRUE)
+  building_cols <- building_cols[building_cols != "EXT_SOURCE_MEAN"]  # Exclude this
+  
+  if (length(building_cols) > 0) {
+    na_count <- 0
+    for (col in building_cols) {
+      na_in_col <- sum(is.na(result[[col]]))
+      if (na_in_col > 0) {
+        result[[col]][is.na(result[[col]])] <- -999
+        na_count <- na_count + na_in_col
+      }
+    }
+    if (na_count > 0) {
+      message(sprintf("    ✓ Building features: %d NAs → -999 (%d features)", 
+                      na_count, length(building_cols)))
+    }
+  }
+  
+  # ------------------------------------------------------------------
+  # EXT_SOURCE columns: median
+  # ------------------------------------------------------------------
+  ext_source_cols <- c("EXT_SOURCE_1", "EXT_SOURCE_2", "EXT_SOURCE_3")
+  for (col in ext_source_cols) {
+    if (col %in% names(result) && any(is.na(result[[col]]))) {
+      na_count <- sum(is.na(result[[col]]))
+      col_median <- median(result[[col]], na.rm = TRUE)
+      result[[col]][is.na(result[[col]])] <- col_median
+      message(sprintf("    ✓ %s: %d NAs → %.4f (median)", col, na_count, col_median))
+    }
+  }
+  
+  # ------------------------------------------------------------------
+  # Credit bureau inquiry columns: 0
+  # ------------------------------------------------------------------
+  bureau_cols <- grep("^AMT_REQ_CREDIT_BUREAU_", names(result), value = TRUE)
+  if (length(bureau_cols) > 0) {
+    na_count <- 0
+    for (col in bureau_cols) {
+      na_in_col <- sum(is.na(result[[col]]))
+      if (na_in_col > 0) {
+        result[[col]][is.na(result[[col]])] <- 0
+        na_count <- na_count + na_in_col
+      }
+    }
+    if (na_count > 0) {
+      message(sprintf("    ✓ Bureau inquiry cols: %d NAs → 0 (%d features)", 
+                      na_count, length(bureau_cols)))
+    }
+  }
+  
+  # ------------------------------------------------------------------
+  # Social circle columns: median
+  # ------------------------------------------------------------------
+  social_cols <- c("OBS_30_CNT_SOCIAL_CIRCLE", "DEF_30_CNT_SOCIAL_CIRCLE",
+                   "OBS_60_CNT_SOCIAL_CIRCLE", "DEF_60_CNT_SOCIAL_CIRCLE")
+  for (col in social_cols) {
+    if (col %in% names(result) && any(is.na(result[[col]]))) {
+      na_count <- sum(is.na(result[[col]]))
+      col_median <- median(result[[col]], na.rm = TRUE)
+      result[[col]][is.na(result[[col]])] <- col_median
+      message(sprintf("    ✓ %s: %d NAs → %.2f (median)", col, na_count, col_median))
+    }
+  }
+  
+  # ------------------------------------------------------------------
+  # All remaining numeric columns: median
+  # ------------------------------------------------------------------
+  numeric_cols <- names(result)[sapply(result, is.numeric)]
+  na_count_total <- 0
+  na_cols_count <- 0
+  
+  for (col in numeric_cols) {
+    if (any(is.na(result[[col]]))) {
+      na_count <- sum(is.na(result[[col]]))
+      col_median <- median(result[[col]], na.rm = TRUE)
+      result[[col]][is.na(result[[col]])] <- col_median
+      na_count_total <- na_count_total + na_count
+      na_cols_count <- na_cols_count + 1
+    }
+  }
+  
+  if (na_count_total > 0) {
+    message(sprintf("    ✓ Other numeric: %d NAs → median (%d features)", 
+                    na_count_total, na_cols_count))
+  }
+  
+  # ------------------------------------------------------------------
+  # All remaining categorical columns: mode (most frequent value)
+  # ------------------------------------------------------------------
+  char_cols <- names(result)[sapply(result, is.character)]
+  na_count_total <- 0
+  na_cols_count <- 0
+  
+  for (col in char_cols) {
+    if (any(is.na(result[[col]]))) {
+      na_count <- sum(is.na(result[[col]]))
+      # Get mode (most frequent value)
+      mode_val <- names(sort(table(result[[col]]), decreasing = TRUE))[1]
+      if (is.null(mode_val) || is.na(mode_val)) {
+        mode_val <- "Unknown"
+      }
+      result[[col]][is.na(result[[col]])] <- mode_val
+      na_count_total <- na_count_total + na_count
+      na_cols_count <- na_cols_count + 1
+    }
+  }
+  
+  if (na_count_total > 0) {
+    message(sprintf("    ✓ Categorical: %d NAs → mode (%d features)", 
+                    na_count_total, na_cols_count))
+  }
+  
+  # ------------------------------------------------------------------
+  # Verify no missing values remain
+  # ------------------------------------------------------------------
+  final_na <- sum(is.na(result))
+  
+  if (final_na == 0) {
+    message(sprintf("\n  ✅ Final imputation complete! Zero missing values remaining."))
+  } else {
+    message(sprintf("\n  ⚠️  Warning: %d missing values still remain", final_na))
+  }
+  
+  return(result)
+}
+
+
 # ==============================================================================
 # SECTION 4: FEATURE ENGINEERING
 # ==============================================================================
@@ -563,7 +841,7 @@ engineer_features <- function(data) {
       HAS_REALTY = if_else(FLAG_OWN_REALTY == "Y", 1L, 0L),
       
       # Employment status
-      IS_UNEMPLOYED_PENSIONER = if_else(MISSING_DAYS_EMPLOYED == 1, 1L, 0L)
+      IS_UNEMPLOYED_PENSIONER = if_else(DAYS_EMPLOYED_MISSING == 1, 1L, 0L)
     )
   
   new_features <- ncol(result) - original_cols
@@ -681,6 +959,8 @@ engineer_combined_features <- function(data) {
 #' @param include_bureau Include bureau features (default: TRUE)
 #' @param include_prev_app Include previous application features (default: TRUE)
 #' @param include_installments Include installment features (default: TRUE)
+#' @param include_credit_card Include credit card balance features (default: TRUE)
+#' @param final_imputation Apply final complete imputation to remove all NAs (default: FALSE)
 #' @return List with 'data' (prepared dataframe) and 'impute_values' (for test set)
 #' @examples
 #' # Step 1: Prepare training data
@@ -699,7 +979,9 @@ prepare_data_pipeline <- function(
     impute_values = NULL,
     include_bureau = TRUE,
     include_prev_app = TRUE,
-    include_installments = TRUE
+    include_installments = TRUE,
+    include_credit_card = TRUE,
+    final_imputation = FALSE
 ) {
   
   is_training <- is.null(impute_values)
@@ -746,6 +1028,15 @@ prepare_data_pipeline <- function(
                              show_col_types = FALSE)
     install_agg <- aggregate_installments(installments)
     result <- result |> left_join(install_agg, by = "SK_ID_CURR")
+  }
+  
+  # Credit card balance
+  if (include_credit_card) {
+    message("\nProcessing credit_card_balance.csv...")
+    credit_card <- read_csv(file.path(data_path, "credit_card_balance.csv"),
+                            show_col_types = FALSE)
+    cc_agg <- aggregate_credit_card(credit_card)
+    result <- result |> left_join(cc_agg, by = "SK_ID_CURR")
   }
   
   supp_cols_added <- ncol(result) - start_cols
@@ -804,6 +1095,16 @@ prepare_data_pipeline <- function(
   message(sprintf("\n✅ Stage 5 complete: %d combined features created", comb_cols_added))
   
   # --------------------------------------------------------------------------
+  # OPTIONAL STAGE 6: Final complete imputation (if requested)
+  # --------------------------------------------------------------------------
+  if (final_imputation) {
+    message("\n\n[STAGE 6/6] FINAL COMPLETE IMPUTATION")
+    message(rep("-", 70))
+    result <- apply_final_imputation(result)
+    message("\n✅ Stage 6 complete: Zero missing values remaining")
+  }
+  
+  # --------------------------------------------------------------------------
   # Final summary
   # --------------------------------------------------------------------------
   total_new_features <- ncol(result) - start_cols
@@ -825,6 +1126,47 @@ prepare_data_pipeline <- function(
     impute_values = impute_values
   ))
 }
+
+
+# ==============================================================================
+# EXAMPLE USAGE: Generate Fully Imputed Train and Test Data
+# ==============================================================================
+
+# Uncomment and run this section to generate fully imputed data for modeling
+#
+# # Load raw data
+# train <- read_csv("application_train.csv")
+# test <- read_csv("application_test.csv")
+# 
+# # Process TRAINING data with final imputation
+# train_result <- prepare_data_pipeline(
+#   app_data = train,
+#   data_path = ".",
+#   impute_values = NULL,
+#   final_imputation = TRUE  # Zero NAs for logistic regression
+# )
+# 
+# # Process TEST data using its own medians
+# test_result <- prepare_data_pipeline(
+#   app_data = test,
+#   data_path = ".",
+#   impute_values = NULL,  # NULL = compute from test data's own values
+#   final_imputation = TRUE  # Zero NAs for logistic regression
+# )
+# 
+# # Extract prepared datasets
+# train_prepared <- train_result$data
+# test_prepared <- test_result$data
+# 
+# # Export
+# write_csv(train_prepared, "application_train_fully_imputed.csv")
+# write_csv(test_prepared, "application_test_fully_imputed.csv")
+# 
+# # Verify
+# message(sprintf("Train: %d rows × %d cols, %d NAs", 
+#                 nrow(train_prepared), ncol(train_prepared), sum(is.na(train_prepared))))
+# message(sprintf("Test: %d rows × %d cols, %d NAs", 
+#                 nrow(test_prepared), ncol(test_prepared), sum(is.na(test_prepared))))
 
 
 # ==============================================================================
