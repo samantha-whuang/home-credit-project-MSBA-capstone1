@@ -18,14 +18,20 @@ This project aims to predict whether a loan applicant will default on their loan
 home-credit-project-MSBA-capstone1-1/
 ├── README.md                                    # This file
 ├── home_credit_eda.qmd                          # Exploratory Data Analysis (Quarto)
+├── home_credit_modeling.qmd                     # Machine Learning Models (Python/Quarto)
 ├── Data_Preparation_and_Feature_Engineering.R  # Data prep functions
 ├── data/                                        # Raw data files (not tracked)
 │   ├── application_train.csv
 │   ├── application_test.csv
 │   ├── bureau.csv
 │   ├── previous_application.csv
-│   └── installments_payments.csv
-└── output/                                      # Generated outputs
+│   ├── installments_payments.csv
+│   └── credit_card_balance.csv
+├── output/                                      # Generated outputs
+│   ├── rf_model_enhanced.pkl                    # Best performing model (65.7 MB)
+│   └── submission_rf_enhanced.csv               # Kaggle submission file
+└── processed_data/                              # Prepared datasets
+    └── application_train_fully_imputed.csv      # Training data with full imputation
 ```
 
 ---
@@ -189,6 +195,82 @@ saveRDS(train_impute_vals, "imputation_values.rds")
 
 ---
 
+## 🤖 Predictive Modeling
+
+### Notebook: `home_credit_modeling.qmd`
+
+This notebook contains the complete machine learning pipeline, from baseline establishment to final model selection and Kaggle submission.
+
+### Models Evaluated
+
+#### **1. Baseline: Majority Class Classifier**
+- **Strategy**: Always predict class 0 (Repaid)
+- **Performance**: 91.91% accuracy, AUC = 0.50
+- **Purpose**: Establish minimum performance threshold
+
+#### **2. Logistic Regression**
+- **Configuration**: Balanced class weights, 308 features (after one-hot encoding)
+- **Performance**: ~92.2% accuracy, AUC ~0.6-0.7
+- **Finding**: Improved over baseline but limited by linear assumptions
+
+#### **3. Random Forest (Default Parameters)**
+- **Configuration**: 100 trees, max_depth=20, balanced class weights
+- **Performance**: AUC ~0.76
+- **Key Analysis**: Identified top 20 most important features
+
+#### **4. Class Imbalance Strategy Comparison**
+Evaluated three approaches to handle the 8% default rate:
+- **Class Weight (Balanced)**: Fast training, effective performance ✅
+- **SMOTE (Over-sampling)**: Slower, improved recall for defaults
+- **Random Under-sampling**: Fastest, but loses information
+
+**Winner**: Class weight method provided the best balance
+
+#### **5. Random Forest (Hyperparameter Tuned)**
+- **Tuning Method**: RandomizedSearchCV (3-fold CV, 20 iterations)
+- **Search Space**: n_estimators, max_depth, min_samples_split/leaf, max_features, bootstrap
+- **Performance**: AUC = 0.7624
+- **Training**: Full dataset (246,008 samples)
+
+#### **6. Random Forest Enhanced (Final Model)** ⭐
+- **Enhancement**: Added 23 credit card features from `credit_card_balance.csv`
+  - Utilization metrics (CC_AVG_UTILIZATION, CC_HIGH_UTIL_PCT)
+  - Delinquency indicators (CC_DPD_COUNT, CC_LATE_COUNT, CC_MAX_DPD)
+  - Balance trends (CC_BALANCE_TREND)
+  - Payment behavior (CC_PAYMENT_RATIO, CC_ATM_RATE, CC_DRAWING_RATE)
+- **Total Features**: 331 (308 original + 23 credit card)
+- **Performance**: 
+  - **AUC = 0.7650** (best performance)
+  - Caught 2,632 out of 4,965 defaults in test set
+  - Improvement: +0.0026 AUC over tuned baseline
+- **Key Insight**: Credit card behavior adds predictive power beyond application data
+
+### Final Model Selection
+
+**Selected Model**: Random Forest Enhanced with Credit Card Features
+
+**Why This Model?**
+1. **Best Predictive Performance**: Highest AUC (0.7650) across all models tested
+2. **Meaningful Improvement**: Credit card features provided incremental lift over baseline
+3. **Robust to Class Imbalance**: Balanced class weights effectively handled 8% default rate
+4. **Interpretable**: Feature importance analysis reveals key risk drivers
+5. **Kaggle Score**: 0.76145 (validated on test set)
+
+**Top Predictive Features**:
+- EXT_SOURCE_2, EXT_SOURCE_3 (external credit scores)
+- CC_HIGH_UTIL_PCT (credit card high utilization frequency)
+- CC_DRAWING_RATE (credit drawing behavior)
+- DAYS_BIRTH (age), DAYS_EMPLOYED (employment tenure)
+- CC_PAYMENT_RATIO (payment discipline)
+
+### Model Deliverables
+
+- **Saved Model**: `rf_model_enhanced.pkl` (65.7 MB)
+- **Submission File**: `submission_rf_enhanced.csv` (48,744 predictions)
+- **Kaggle Score**: 0.76145
+
+---
+
 ## 📝 Key Design Principles
 
 ✅ **No Data Leakage**: Test data uses training statistics for imputation  
@@ -202,21 +284,32 @@ saveRDS(train_impute_vals, "imputation_values.rds")
 
 ## 🔧 Requirements
 
+### R Packages (Data Preparation & EDA)
 ```r
-# Required R packages
 library(tidyverse)  # Data manipulation (dplyr, tidyr, readr)
 library(stringr)    # String operations
 ```
 
+### Python Packages (Modeling)
+```python
+polars              # Fast data manipulation
+numpy               # Numerical computing
+pandas              # Data structures
+plotnine            # Visualization (ggplot2 for Python)
+scikit-learn        # Machine learning models and metrics
+imbalanced-learn    # SMOTE and imbalance handling
+```
+
 ---
 
-## 📚 Next Steps
+## 📚 Progress Tracker
 
 1. ✅ Exploratory Data Analysis (EDA)
 2. ✅ Data Preparation & Feature Engineering
-3. ⬜ Model Development (Logistic Regression, Random Forest, XGBoost)
-4. ⬜ Model Evaluation & Validation
-5. ⬜ Final Report & Presentation
+3. ✅ Model Development (Logistic Regression, Random Forest, Hyperparameter Tuning)
+4. ✅ Model Evaluation & Validation (Class Imbalance Strategies, Feature Enhancement)
+5. ✅ Kaggle Submission (Best Model: AUC = 0.76145)
+6. ⬜ Final Report & Presentation
 
 ---
 
@@ -228,4 +321,4 @@ IS 6850
 
 ---
 
-*Last Updated: February 4, 2026*
+*Last Updated: February 28, 2026*

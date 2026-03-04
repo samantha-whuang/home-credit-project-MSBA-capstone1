@@ -1274,4 +1274,4 @@ print("3. Compare to validation AUC (0.7650)")
 print("4. If needed, iterate with additional features or models")
 print("=" * 70)
 ```
-
+### My Kaggle Score: 0.76145
