@@ -1,0 +1,523 @@
+---
+title: "Model Card Analysis - Home Credit Default Risk"
+author: "Samantha Huang"
+date: March 3, 2026
+format:
+  html:
+    toc: true
+    toc-depth: 3
+    code-fold: true
+    code-summary: "Show code"
+    embed-resources: true
+    theme: cosmo
+execute:
+  warning: false
+  message: false
+---
+
+# Setup and Data Loading
+
+This document contains the technical analyses needed for the model card: SHAP explainability, fairness analysis, and decision threshold optimization.
+
+```{python}
+# Import required libraries
+import polars as pl
+import polars.selectors as cs
+import numpy as np
+import pandas as pd
+import pickle
+from plotnine import *
+
+# Machine learning
+from sklearn.metrics import (
+    accuracy_score, 
+    roc_auc_score, 
+    confusion_matrix, 
+    classification_report,
+    roc_curve,
+    precision_recall_curve
+)
+
+# Set display options
+pl.Config.set_tbl_rows(10)
+```
+
+```{python}
+# Load the enhanced training data
+df_train = pl.read_csv(
+    "application_train_fully_imputed.csv",
+    infer_schema_length=None
+)
+
+print(f"Training data shape: {df_train.shape}")
+print(f"Total samples: {df_train.height:,}")
+```
+
+```{python}
+# Prepare data (same as modeling notebook)
+feature_cols = [col for col in df_train.columns if col not in ["SK_ID_CURR", "TARGET"]]
+
+X = df_train.select(feature_cols)
+y = df_train.get_column("TARGET").to_numpy()
+
+# One-hot encode categorical variables
+cat_cols = [col for col in X.columns if X[col].dtype == pl.Utf8]
+X_pd = X.to_pandas()
+X_encoded = pd.get_dummies(X_pd, columns=cat_cols, drop_first=True)
+
+print(f"Features after encoding: {X_encoded.shape[1]}")
+```
+
+```{python}
+# Train/Val split (same random_state as modeling)
+from sklearn.model_selection import train_test_split
+
+X_train, X_val, y_train, y_val = train_test_split(
+    X_encoded, 
+    y, 
+    test_size=0.2, 
+    random_state=42,
+    stratify=y
+)
+
+print(f"Training set: {X_train.shape[0]:,} samples")
+print(f"Validation set: {X_val.shape[0]:,} samples")
+```
+
+```{python}
+# Load the saved enhanced model
+with open('rf_model_enhanced.pkl', 'rb') as f:
+    rf_model = pickle.load(f)
+
+print("✅ Model loaded successfully")
+print(f"Model type: {type(rf_model).__name__}")
+print(f"Number of features: {len(rf_model.feature_names_in_)}")
+```
+
+# SHAP Explainability Analysis
+
+SHAP (SHapley Additive exPlanations) values help us understand which features drive model predictions and by how much.
+
+```{python}
+# Install shap if needed
+import subprocess
+import sys
+
+try:
+    import shap
+    print("✅ SHAP already installed")
+except ImportError:
+    print("Installing SHAP...")
+    subprocess.check_call([sys.executable, "-m", "pip", "install", "shap", "--quiet"])
+    import shap
+    print("✅ SHAP installed successfully")
+```
+
+```{python}
+# Take a 1000-row sample for SHAP analysis (for speed)
+np.random.seed(42)
+sample_idx = np.random.choice(len(X_val), size=1000, replace=False)
+X_sample = X_val.iloc[sample_idx]
+y_sample = y_val[sample_idx]
+
+print(f"SHAP sample size: {len(X_sample):,} rows")
+print(f"Sample default rate: {y_sample.mean()*100:.2f}%")
+```
+
+```{python}
+# Create SHAP explainer (TreeExplainer for Random Forest)
+print("Creating SHAP explainer...")
+explainer = shap.TreeExplainer(rf_model)
+
+print("Calculating SHAP values for 1,000 samples...")
+print("(This may take a few minutes...)")
+shap_values = explainer.shap_values(X_sample)
+
+print("✅ SHAP values calculated")
+```
+
+```{python}
+# SHAP values come as [class 0, class 1] - we want class 1 (default)
+shap_values_default = shap_values[1]
+
+print(f"SHAP values shape: {shap_values_default.shape}")
+print(f"Features: {shap_values_default.shape[1]}")
+```
+
+## SHAP Summary Plot
+
+```{python}
+#| fig-width: 10
+#| fig-height: 8
+
+# Create SHAP summary plot
+import matplotlib.pyplot as plt
+
+plt.figure(figsize=(10, 8))
+shap.summary_plot(
+    shap_values_default, 
+    X_sample,
+    plot_type="dot",
+    show=False,
+    max_display=20
+)
+plt.title("SHAP Feature Importance - Top 20 Features", fontsize=14, pad=20)
+plt.tight_layout()
+plt.show()
+```
+
+## Top 20 Most Important Features
+
+```{python}
+# Calculate mean absolute SHAP values for each feature
+mean_abs_shap = np.abs(shap_values_default).mean(axis=0)
+
+# Create DataFrame with feature importance
+shap_importance = pd.DataFrame({
+    'feature': X_sample.columns,
+    'mean_abs_shap': mean_abs_shap
+}).sort_values('mean_abs_shap', ascending=False)
+
+# Display top 20
+top_20_shap = shap_importance.head(20).reset_index(drop=True)
+top_20_shap.index = top_20_shap.index + 1
+top_20_shap.index.name = 'Rank'
+
+print("\nTop 20 Most Important Features (by Mean |SHAP|):")
+print(top_20_shap.to_string())
+```
+
+## SHAP Feature Importance Visualization
+
+```{python}
+#| fig-width: 10
+#| fig-height: 8
+
+# Plot top 20 features
+(
+    ggplot(top_20_shap.reset_index(), aes(x='reorder(feature, mean_abs_shap)', y='mean_abs_shap'))
+    + geom_col(fill='steelblue')
+    + coord_flip()
+    + labs(
+        title='Top 20 Most Impactful Features (SHAP Analysis)',
+        x='Feature',
+        y='Mean Absolute SHAP Value',
+        subtitle='Higher values indicate greater impact on model predictions'
+    )
+    + theme_minimal()
+    + theme(figure_size=(10, 8))
+)
+```
+
+# Fairness Analysis
+
+Analyzing model predictions across demographic groups to identify potential disparities.
+
+```{python}
+# Make predictions on validation set
+y_pred_val = rf_model.predict(X_val)
+y_prob_val = rf_model.predict_proba(X_val)[:, 1]
+
+# Get original data with demographics
+df_val = df_train.filter(
+    pl.col("SK_ID_CURR").is_in(
+        df_train.select("SK_ID_CURR").to_series()[X_val.index]
+    )
+)
+
+# Add predictions to validation data
+df_val_analysis = df_val.with_columns([
+    pl.Series("predicted_default", y_pred_val),
+    pl.Series("default_probability", y_prob_val)
+])
+
+print(f"Validation data with predictions: {df_val_analysis.shape}")
+```
+
+## Fairness by Gender
+
+```{python}
+# Analyze approval rates by gender
+fairness_gender = (
+    df_val_analysis
+    .group_by("CODE_GENDER")
+    .agg([
+        pl.len().alias("count"),
+        pl.col("predicted_default").mean().alias("predicted_default_rate"),
+        pl.col("TARGET").mean().alias("actual_default_rate"),
+        (1 - pl.col("predicted_default")).mean().alias("approval_rate")
+    ])
+    .sort("CODE_GENDER")
+)
+
+print("\nFairness Analysis by Gender:")
+print(fairness_gender)
+```
+
+```{python}
+# Calculate disparate impact ratio (80% rule)
+approval_rates = fairness_gender.to_pandas()
+if len(approval_rates) >= 2:
+    max_approval = approval_rates['approval_rate'].max()
+    min_approval = approval_rates['approval_rate'].min()
+    disparate_impact_ratio = min_approval / max_approval
+    
+    print(f"\nDisparate Impact Analysis:")
+    print(f"  Highest approval rate: {max_approval*100:.2f}%")
+    print(f"  Lowest approval rate: {min_approval*100:.2f}%")
+    print(f"  Disparate Impact Ratio: {disparate_impact_ratio:.3f}")
+    print(f"  Passes 80% rule: {'✅ Yes' if disparate_impact_ratio >= 0.8 else '❌ No'}")
+```
+
+## Fairness by Education Level
+
+```{python}
+# Analyze approval rates by education
+fairness_education = (
+    df_val_analysis
+    .group_by("NAME_EDUCATION_TYPE")
+    .agg([
+        pl.len().alias("count"),
+        pl.col("predicted_default").mean().alias("predicted_default_rate"),
+        pl.col("TARGET").mean().alias("actual_default_rate"),
+        (1 - pl.col("predicted_default")).mean().alias("approval_rate")
+    ])
+    .sort("approval_rate")
+)
+
+print("\nFairness Analysis by Education Level:")
+print(fairness_education)
+```
+
+```{python}
+#| fig-width: 12
+#| fig-height: 6
+
+# Visualize approval rates by education
+edu_df = fairness_education.to_pandas()
+
+(
+    ggplot(edu_df, aes(x='reorder(NAME_EDUCATION_TYPE, approval_rate)', y='approval_rate'))
+    + geom_col(fill='steelblue')
+    + geom_hline(yintercept=0.8, linetype='dashed', color='red', alpha=0.5)
+    + coord_flip()
+    + labs(
+        title='Approval Rates by Education Level',
+        x='Education Level',
+        y='Approval Rate',
+        subtitle='Red line shows 80% threshold for disparate impact analysis'
+    )
+    + scale_y_continuous(labels=lambda l: [f'{int(x*100)}%' for x in l])
+    + theme_minimal()
+    + theme(figure_size=(12, 6))
+)
+```
+
+# Decision Threshold Analysis
+
+Finding the optimal probability threshold based on realistic lending economics.
+
+## Lending Economics Assumptions
+
+Based on consumer lending industry research, we'll use realistic cost assumptions:
+
+```{python}
+# Cost assumptions (based on industry research)
+# Source: Federal Reserve Bank studies on consumer lending
+avg_loan_amount = df_train.select("AMT_CREDIT").mean()[0, 0]
+avg_loan_term_days = df_train.select("DAYS_CREDIT").mean()[0, 0] if "DAYS_CREDIT" in df_train.columns else 365 * 3
+
+print("Lending Economics Assumptions:")
+print("=" * 70)
+print(f"Average loan amount: ${avg_loan_amount:,.0f}")
+print(f"\nProfit on repaid loan:")
+print(f"  • Interest rate: 15% APR (typical for consumer loans)")
+print(f"  • Operating costs: 3% of loan amount")
+print(f"  • Net profit per repaid loan: ~12% of loan amount")
+profit_per_repaid = avg_loan_amount * 0.12
+print(f"  • Estimated profit: ${profit_per_repaid:,.0f}")
+
+print(f"\nLoss on defaulted loan:")
+print(f"  • Loss Given Default (LGD): 75% (industry standard)")
+print(f"  • Recovery rate: 25%")
+loss_per_default = avg_loan_amount * 0.75
+print(f"  • Estimated loss: ${loss_per_default:,.0f}")
+
+print(f"\nCost ratio: Loss/Profit = {loss_per_default/profit_per_repaid:.1f}:1")
+print("=" * 70)
+```
+
+## Threshold Optimization
+
+```{python}
+# Calculate expected value at different thresholds
+thresholds_to_test = np.arange(0.05, 0.96, 0.05)
+
+results = []
+for threshold in thresholds_to_test:
+    # Make predictions at this threshold
+    predictions = (y_prob_val >= threshold).astype(int)
+    
+    # Confusion matrix
+    tn, fp, fn, tp = confusion_matrix(y_val, predictions).ravel()
+    
+    # Financial outcomes
+    # True Negatives: Correctly approved (will repay) -> profit
+    # False Positives: Incorrectly denied (would have repaid) -> opportunity cost
+    # False Negatives: Incorrectly approved (will default) -> loss
+    # True Positives: Correctly denied (would default) -> avoided loss
+    
+    approved = tn + fn  # Approved loans
+    total_profit = tn * profit_per_repaid  # Profit from good loans
+    total_loss = fn * loss_per_default     # Loss from bad loans
+    net_value = total_profit - total_loss
+    
+    # Metrics
+    approval_rate = (tn + fn) / len(y_val)
+    default_rate_approved = fn / (tn + fn) if (tn + fn) > 0 else 0
+    
+    results.append({
+        'threshold': threshold,
+        'approval_rate': approval_rate,
+        'approved_count': approved,
+        'defaults_approved': fn,
+        'defaults_caught': tp,
+        'default_rate_approved': default_rate_approved,
+        'total_profit': total_profit,
+        'total_loss': total_loss,
+        'net_value': net_value,
+        'net_value_per_loan': net_value / len(y_val)
+    })
+
+results_df = pd.DataFrame(results)
+
+# Find optimal threshold
+optimal_idx = results_df['net_value'].idxmax()
+optimal_threshold = results_df.loc[optimal_idx, 'threshold']
+
+print(f"\nOptimal Threshold Analysis:")
+print(f"Optimal threshold: {optimal_threshold:.2f}")
+print(f"\nAt optimal threshold:")
+print(f"  • Approval rate: {results_df.loc[optimal_idx, 'approval_rate']*100:.1f}%")
+print(f"  • Default rate (among approved): {results_df.loc[optimal_idx, 'default_rate_approved']*100:.2f}%")
+print(f"  • Net value: ${results_df.loc[optimal_idx, 'net_value']:,.0f}")
+print(f"  • Net value per loan: ${results_df.loc[optimal_idx, 'net_value_per_loan']:,.0f}")
+```
+
+## Sensitivity Analysis
+
+```{python}
+#| fig-width: 12
+#| fig-height: 8
+
+# Create visualizations
+import matplotlib.pyplot as plt
+
+fig, axes = plt.subplots(2, 2, figsize=(12, 8))
+
+# Plot 1: Net Value vs Threshold
+axes[0, 0].plot(results_df['threshold'], results_df['net_value'] / 1e6, linewidth=2)
+axes[0, 0].axvline(optimal_threshold, color='red', linestyle='--', alpha=0.7)
+axes[0, 0].set_xlabel('Probability Threshold')
+axes[0, 0].set_ylabel('Net Value ($M)')
+axes[0, 0].set_title('Net Value vs Decision Threshold')
+axes[0, 0].grid(alpha=0.3)
+
+# Plot 2: Approval Rate vs Threshold
+axes[0, 1].plot(results_df['threshold'], results_df['approval_rate'] * 100, linewidth=2, color='green')
+axes[0, 1].axvline(optimal_threshold, color='red', linestyle='--', alpha=0.7)
+axes[0, 1].set_xlabel('Probability Threshold')
+axes[0, 1].set_ylabel('Approval Rate (%)')
+axes[0, 1].set_title('Approval Rate vs Decision Threshold')
+axes[0, 1].grid(alpha=0.3)
+
+# Plot 3: Default Rate Among Approved
+axes[1, 0].plot(results_df['threshold'], results_df['default_rate_approved'] * 100, linewidth=2, color='orange')
+axes[1, 0].axvline(optimal_threshold, color='red', linestyle='--', alpha=0.7)
+axes[1, 0].set_xlabel('Probability Threshold')
+axes[1, 0].set_ylabel('Default Rate (%)')
+axes[1, 0].set_title('Default Rate Among Approved Loans')
+axes[1, 0].grid(alpha=0.3)
+
+# Plot 4: Profit vs Loss
+axes[1, 1].plot(results_df['threshold'], results_df['total_profit'] / 1e6, 
+                linewidth=2, label='Total Profit', color='green')
+axes[1, 1].plot(results_df['threshold'], results_df['total_loss'] / 1e6, 
+                linewidth=2, label='Total Loss', color='red')
+axes[1, 1].axvline(optimal_threshold, color='red', linestyle='--', alpha=0.7)
+axes[1, 1].set_xlabel('Probability Threshold')
+axes[1, 1].set_ylabel('Amount ($M)')
+axes[1, 1].set_title('Profit vs Loss by Threshold')
+axes[1, 1].legend()
+axes[1, 1].grid(alpha=0.3)
+
+plt.tight_layout()
+plt.show()
+```
+
+## Threshold Comparison Table
+
+```{python}
+# Show key threshold options
+threshold_options = results_df[results_df['threshold'].isin([0.25, 0.30, 0.35, 0.40, 0.45, 0.50])].copy()
+threshold_options['approval_rate'] = (threshold_options['approval_rate'] * 100).round(1)
+threshold_options['default_rate_approved'] = (threshold_options['default_rate_approved'] * 100).round(2)
+threshold_options['net_value'] = threshold_options['net_value'].round(0)
+threshold_options['net_value_per_loan'] = threshold_options['net_value_per_loan'].round(0)
+
+print("\nThreshold Options Comparison:")
+print(threshold_options[['threshold', 'approval_rate', 'default_rate_approved', 
+                         'approved_count', 'defaults_approved', 'net_value']].to_string(index=False))
+```
+
+# Summary Statistics for Model Card
+
+```{python}
+# Calculate final metrics at optimal threshold
+from sklearn.metrics import classification_report
+
+y_pred_optimal = (y_prob_val >= optimal_threshold).astype(int)
+
+print("\n" + "=" * 70)
+print("MODEL PERFORMANCE AT OPTIMAL THRESHOLD")
+print("=" * 70)
+print(f"\nOptimal Threshold: {optimal_threshold:.2f}")
+print(f"\nValidation Metrics:")
+print(f"  • AUC-ROC: {roc_auc_score(y_val, y_prob_val):.4f}")
+print(f"  • Accuracy: {accuracy_score(y_val, y_pred_optimal):.4f}")
+
+print("\nConfusion Matrix:")
+cm = confusion_matrix(y_val, y_pred_optimal)
+print(cm)
+
+print("\nClassification Report:")
+print(classification_report(y_val, y_pred_optimal, target_names=["Repaid", "Default"]))
+
+print("\nBusiness Metrics:")
+print(f"  • Approval Rate: {results_df.loc[optimal_idx, 'approval_rate']*100:.1f}%")
+print(f"  • Expected Net Value: ${results_df.loc[optimal_idx, 'net_value']:,.0f}")
+print(f"  • Value per Loan: ${results_df.loc[optimal_idx, 'net_value_per_loan']:,.0f}")
+print("=" * 70)
+```
+
+# Save Results for Model Card
+
+```{python}
+# Save key metrics to file for reference
+model_card_metrics = {
+    'optimal_threshold': optimal_threshold,
+    'validation_auc': roc_auc_score(y_val, y_prob_val),
+    'kaggle_score': 0.76145,
+    'top_20_features': top_20_shap['feature'].tolist(),
+    'approval_rate': results_df.loc[optimal_idx, 'approval_rate'],
+    'expected_net_value': results_df.loc[optimal_idx, 'net_value'],
+    'fairness_gender': fairness_gender.to_pandas().to_dict('records'),
+    'fairness_education': fairness_education.to_pandas().to_dict('records')
+}
+
+import json
+with open('model_card_metrics.json', 'w') as f:
+    json.dump(model_card_metrics, f, indent=2)
+
+print("✅ Metrics saved to model_card_metrics.json")
+```

@@ -43,6 +43,7 @@ A Random Forest machine learning model that:
 - Predicts default probability for each loan application
 - Incorporates 331 features including credit history, employment, demographics, and credit card behavior
 - Achieves **76.5% AUC** (strong discrimination between good and bad loans)
+- **Passed Kaggle competition validation**: 0.7615 AUC on external test data
 
 ## Expected Financial Impact
 
@@ -243,6 +244,7 @@ This model:
 
 
 ```{python}
+#| eval: false
 #| include: false
 # Import libraries (hidden from output)
 import polars as pl
@@ -476,6 +478,7 @@ This model is designed to support credit risk assessment in consumer lending ope
 # Performance Metrics
 
 ```{python}
+#| eval: false
 #| include: false
 # Load model and data for metrics
 df_train = pl.read_csv("application_train_fully_imputed.csv", infer_schema_length=None)
@@ -513,6 +516,7 @@ This section reports model performance on the validation set (20% holdout, 61,50
 The Area Under the Receiver Operating Characteristic Curve (AUC-ROC) measures the model's ability to discriminate between defaults and repayments across all possible thresholds.
 
 ```{python}
+#| eval: false
 #| echo: false
 from sklearn.metrics import roc_auc_score
 
@@ -552,6 +556,7 @@ val_auc = roc_auc_score(y_val, y_prob_val)
 Using the default probability threshold of 0.5 (predict default if probability ≥ 0.5):
 
 ```{python}
+#| eval: false
 #| echo: false
 from sklearn.metrics import confusion_matrix, precision_score, recall_score, f1_score
 
@@ -579,6 +584,7 @@ default_rate_in_approved = fn / (tn + fn) if (tn + fn) > 0 else 0
 ### Confusion Matrix (Threshold = 0.5)
 
 ```{python}
+#| eval: false
 #| echo: false
 #| label: fig-confusion-matrix
 #| fig-cap: "Confusion Matrix at 0.5 Probability Threshold"
@@ -629,6 +635,7 @@ plt.show()
 ### Business-Relevant Metrics
 
 ```{python}
+#| eval: false
 #| echo: false
 # Calculate business metrics
 approval_rate = (tn + fn) / len(y_val)
@@ -647,6 +654,7 @@ default_rate_denied = tp / (tp + fp) if (tp + fp) > 0 else 0
 ### ROC Curve
 
 ```{python}
+#| eval: false
 #| echo: false
 #| label: fig-roc-curve
 #| fig-cap: "ROC Curve showing trade-off between True Positive Rate and False Positive Rate"
@@ -2042,3 +2050,5 @@ Given these limitations, responsible use requires:
 **Remember:** A good model used responsibly is better than a perfect model used carelessly.
 
 ---
+
+**Next Section Preview:** Section 9 will provide an Executive Summary for senior leadership.

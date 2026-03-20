@@ -19,6 +19,7 @@ home-credit-project-MSBA-capstone1-1/
 ├── README.md                                    # This file
 ├── home_credit_eda.qmd                          # Exploratory Data Analysis (Quarto)
 ├── home_credit_modeling.qmd                     # Machine Learning Models (Python/Quarto)
+├── MODEL_CARD.qmd                               # ⭐ Comprehensive Model Documentation (2,047 lines)
 ├── Data_Preparation_and_Feature_Engineering.R  # Data prep functions
 ├── data/                                        # Raw data files (not tracked)
 │   ├── application_train.csv
@@ -29,7 +30,8 @@ home-credit-project-MSBA-capstone1-1/
 │   └── credit_card_balance.csv
 ├── output/                                      # Generated outputs
 │   ├── rf_model_enhanced.pkl                    # Best performing model (65.7 MB)
-│   └── submission_rf_enhanced.csv               # Kaggle submission file
+│   ├── submission_rf_enhanced.csv               # Kaggle submission file
+│   └── MODEL_CARD.html                          # ⭐ Rendered model card (coming soon)
 └── processed_data/                              # Prepared datasets
     └── application_train_fully_imputed.csv      # Training data with full imputation
 ```
@@ -302,6 +304,94 @@ imbalanced-learn    # SMOTE and imbalance handling
 
 ---
 
+## 📄 Model Card (NEW!)
+
+### Comprehensive Documentation: `MODEL_CARD.qmd`
+
+A complete model card documenting the Random Forest Enhanced model for production deployment, regulatory compliance, and stakeholder communication.
+
+#### **Executive Summary**
+- **Recommendation**: Deploy at threshold 0.35
+- **Expected Impact**: $10-15M annual profit improvement
+- **Approval Rate**: 85% (vs 75% at conservative 0.5 threshold)
+- **Fairness**: Passes 80% rule for gender (1.000) and education (0.888)
+
+#### **9 Comprehensive Sections**:
+
+1. **Model Details** (Line 257)
+   - Architecture: Random Forest with 331 features
+   - Training: 246K samples, 8% default rate, balanced class weights
+   - Validation AUC: 0.7650 | Kaggle AUC: 0.7615
+
+2. **Intended Use** (Line 369)
+   - Users: Credit analysts, loan officers, risk managers
+   - Decisions: Screening, pricing, portfolio monitoring
+   - Limitations: NOT for sole decisioning or different loan products
+
+3. **Performance Metrics** (Line 477)
+   - Detailed confusion matrix analysis
+   - ROC curve visualization
+   - Warning: 0.5 threshold is for reporting only
+
+4. **Decision Threshold Analysis** (Line 707)
+   - Research-based lending economics (Federal Reserve, Basel III)
+   - Optimal threshold: **0.35** (derived from 6.3:1 cost ratio)
+   - Sensitivity analysis showing business outcomes at different thresholds
+
+5. **Model Explainability** (Line 879)
+   - Top 20 predictive features via SHAP analysis
+   - Credit card features: 6 of top 20 (validates enhancement)
+   - Transparency limitations: EXT_SOURCE black boxes
+
+6. **Adverse Action Mapping** (Line 1056)
+   - ECOA/FCRA compliant translations
+   - "EXT_SOURCE_2 (low)" → "Limited external credit history"
+   - Sample adverse action notice
+   - Implementation guidance for loan officers
+
+7. **Fairness Analysis** (Line 1307)
+   - Gender: Perfect equality (85.0% approval for both)
+   - Education: 80.0%-90.1% range, passes 80% rule (0.888 ratio)
+   - Disparities justified by actual risk differences (3.8%-10.5% default rates)
+   - Regulatory compliance: ECOA, Fair Housing Act, Disparate Impact Doctrine
+
+8. **Limitations and Risks** (Line 1593)
+   - Data limitations: Historical (2018), geographic scope, missing alternative credit data
+   - Model constraints: External score dependency, class imbalance effects
+   - Behavioral factors: Cannot predict life events, intentionality
+   - Implementation risks: Threshold sensitivity, model drift, adversarial gaming
+   - Ethical considerations: Feedback loops, cannot address root causes
+
+9. **Executive Summary** (Line 22)
+   - One-page summary for senior leadership
+   - Business case, financial impact, implementation requirements
+   - Critical caveats (🔴 High priority: external score dependency, model drift)
+   - Success criteria for first 6 months
+
+#### **Key Numbers**:
+| Metric | Value |
+|--------|-------|
+| **Optimal Threshold** | 0.35 |
+| **Approval Rate** | 85% |
+| **Model AUC** | 0.7615 (Kaggle) |
+| **Annual Profit Lift** | $10-15M estimated |
+| **Fairness (Gender)** | 1.000 ratio (perfect) |
+| **Fairness (Education)** | 0.888 ratio (pass) |
+
+#### **Citations**:
+- Federal Reserve Bank of Kansas City (2019). "Consumer Lending Profitability in the Digital Age"
+- Basel III banking regulations for Loss Given Default (LGD)
+- McKinsey & Company (2020). "The Future of Consumer Lending in Emerging Markets"
+- ECOA, FCRA, Fair Housing Act compliance
+
+#### **File Details**:
+- **Length**: 2,047 lines (9 complete sections)
+- **Format**: Quarto document (.qmd)
+- **Output**: HTML with code hidden, outputs displayed
+- **Status**: ✅ Complete and ready for submission
+
+---
+
 ## 📚 Progress Tracker
 
 1. ✅ Exploratory Data Analysis (EDA)
@@ -309,7 +399,8 @@ imbalanced-learn    # SMOTE and imbalance handling
 3. ✅ Model Development (Logistic Regression, Random Forest, Hyperparameter Tuning)
 4. ✅ Model Evaluation & Validation (Class Imbalance Strategies, Feature Enhancement)
 5. ✅ Kaggle Submission (Best Model: AUC = 0.76145)
-6. ⬜ Final Report & Presentation
+6. ✅ **Model Card Documentation (9 sections, 2,047 lines)** ⭐ NEW!
+7. ⬜ Final Presentation
 
 ---
 
@@ -321,4 +412,4 @@ IS 6850
 
 ---
 
-*Last Updated: February 28, 2026*
+*Last Updated: March 6, 2026*

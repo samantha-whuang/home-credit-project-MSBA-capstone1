@@ -1,0 +1,39 @@
+
+Starting python3 kernel...Done
+
+Executing 'MODEL_CARD.quarto_ipynb'
+  Cell 1/7: ''.......................Done
+  Cell 2/7: ''.......................Done
+  Cell 3/7: ''.......................Done
+  Cell 4/7: ''.......................Done
+  Cell 5/7: 'fig-confusion-matrix'...Done
+  Cell 6/7: ''.......................Done
+  Cell 7/7: 'fig-roc-curve'..........Done
+
+[1mpandoc [22m
+  to: html
+  output-file: MODEL_CARD.html
+  standalone: true
+  embed-resources: true
+  section-divs: true
+  html-math-method: mathjax
+  wrap: none
+  default-image-extension: png
+  toc: true
+  toc-depth: 2
+  variables: {}
+  
+[1mmetadata[22m
+  document-css: false
+  link-citations: true
+  date-format: long
+  lang: en
+  title: 'Model Card: Home Credit Default Risk Predictor'
+  author: Samantha Huang
+  date: March 4, 2026
+  code-summary: Show code
+  theme: cosmo
+  page-layout: full
+  
+Output created: MODEL_CARD.html
+
