@@ -304,7 +304,7 @@ imbalanced-learn    # SMOTE and imbalance handling
 
 ---
 
-## 📄 Model Card (NEW!)
+## 📄 Model Card
 
 ### Comprehensive Documentation: `MODEL_CARD.qmd`
 
@@ -407,8 +407,7 @@ A complete model card documenting the Random Forest Enhanced model for productio
 ## 📧 Contact
 
 **Samantha Huang**  
-MSBA Program - Capstone 1  
-IS 6850
+wshan626@gmail.com
 
 ---
 
